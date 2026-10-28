@@ -20,6 +20,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewFeature;
 
@@ -42,6 +43,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean screenOn = false;
     private boolean allowZoom = false; 
     private boolean forceDark = false;
+    private boolean pullRefresh = true; // <-- Uključeno po default-u ili čita iz config-a
 
     private WebView webView;
     private ValueCallback<Uri[]> uploadMessage;
@@ -83,7 +85,15 @@ public class MainActivity extends AppCompatActivity {
         
         webView = new WebView(this);
         webView.setBackgroundColor(Color.parseColor("#070707"));
-        setContentView(webView);
+
+        // --- PRIMENA PULL-TO-REFRESH KONTEJNERA ---
+        if (pullRefresh) {
+            PullRefresh pullRefreshHelper = new PullRefresh(this, webView);
+            SwipeRefreshLayout refreshLayout = pullRefreshHelper.setup(null);
+            setContentView(refreshLayout); // Postavljamo SwipeRefreshLayout umesto samog WebView-a
+        } else {
+            setContentView(webView); // Standardno postavljanje ako je isključeno u config-u
+        }
 
         // Inicijalizujemo DownloadHelper
         downloadHelper = new DownloadHelper(this);
@@ -261,6 +271,13 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
+                
+                // Injektujemo skriptu za praćenje pozicije ako je pullRefresh omogućen
+                if (pullRefresh) {
+                    PullRefresh pullHelper = new PullRefresh(MainActivity.this, view);
+                    pullHelper.injectScrollDetector();
+                }
+
                 if (url != null && url.startsWith("file://")) {
                     view.evaluateJavascript("window.webhtml = true;", null);
                 }
@@ -297,12 +314,8 @@ public class MainActivity extends AppCompatActivity {
                         finalUa = (!broAgent.isEmpty()) ? broAgent : webView.getSettings().getUserAgentString();
                     }
 
-                    // Pametna detekcija moda na osnovu user-agent stringa:
-                    // Pošto svi standardni browseri (Mac, Windows, iPhone, Android, tablet...) počinju sa "Mozilla",
-                    // ukoliko string sadrži "mozilla", to je HTML mod. Sve ostalo je API mod.
                     String lowerUa = finalUa.toLowerCase();
                     boolean isHtmlMode = lowerUa.contains("mozilla");
-                    boolean isApiMode = !isHtmlMode;
 
                     URL url = new URL(cleanUrlStr);
                     HttpURLConnection connection = (HttpURLConnection) url.openConnection();
@@ -454,6 +467,7 @@ public class MainActivity extends AppCompatActivity {
             screenOn = parseBoolean(jsContent, "screenOn", false);
             allowZoom = parseBoolean(jsContent, "allowZoom", false); 
             forceDark = parseBoolean(jsContent, "forceDark", false);
+            pullRefresh = parseBoolean(jsContent, "pullRefresh", true); // <-- Čitanje pullRefresh iz config-a
             startURL = parseString(jsContent, "startURL", "");
             broAgent = parseString(jsContent, "broAgent", "");
             externalDomains = parseArray(jsContent, "external");
