@@ -20,7 +20,6 @@ public class PullRefresh {
     }
 
     public CustomSwipeRefreshLayout setup(android.view.ViewGroup.LayoutParams layoutParams) {
-        // Koristimo našu custom klasu za filtriranje pokreta
         swipeRefreshLayout = new CustomSwipeRefreshLayout(context);
         
         if (webView.getParent() != null) {
@@ -36,7 +35,6 @@ public class PullRefresh {
             swipeRefreshLayout.setLayoutParams(layoutParams);
         }
 
-        // Uvek je omogućen, ali Custom klasa unutra filtrira da li se aktivira na osnovu praga i pozicije
         swipeRefreshLayout.setEnabled(true);
 
         webView.addJavascriptInterface(this, "PullRefreshBridge");
@@ -61,45 +59,51 @@ public class PullRefresh {
     }
 
     /**
-     * Injektujemo laganu JS skriptu koja samo javlja Androidu da li smo na vrhu stranice/elementa
+     * Injektujemo JS skriptu koja proverava element TAČNO na mestu gde je prst spušten
      */
     public void injectScrollDetector() {
         String script = "(function() {" +
                 "  if (window.pullRefreshInjected) return;" +
                 "  window.pullRefreshInjected = true;" +
                 "  " +
-                "  function checkTop() {" +
-                "    let scrollTop = window.pageYOffset || document.documentElement.scrollTop;" +
-                "    let atTop = (scrollTop <= 0);" +
-                "    if (atTop) {" +
-                "      let target = document.elementFromPoint(window.innerWidth / 2, 50);" +
-                "      while (target && target !== document.body) {" +
-                "        let style = window.getComputedStyle(target);" +
-                "        let overflowY = style.getPropertyValue('overflow-y');" +
-                "        if ((overflowY === 'auto' || overflowY === 'scroll') && target.scrollHeight > target.clientHeight) {" +
-                "          if (target.scrollTop > 0) {" +
-                "            atTop = false;" +
-                "            break;" +
-                "          }" +
+                "  window.addEventListener('touchstart', function(e) {" +
+                "    if (e.touches.length !== 1) return;" +
+                "    let touchX = e.touches[0].clientX;" +
+                "    let touchY = e.touches[0].clientY;" +
+                "    " +
+                "    let atTop = true;" +
+                "    let target = document.elementFromPoint(touchX, touchY);" +
+                "    " +
+                "    // Proveravamo stablo od elementa na koji je prst spuštен nagore" +
+                "    while (target && target !== document.body && target !== document.documentElement) {" +
+                "      let style = window.getComputedStyle(target);" +
+                "      let overflowY = style.getPropertyValue('overflow-y');" +
+                "      let overflow = style.getPropertyValue('overflow');" +
+                "      " +
+                "      if (overflowY === 'auto' || overflowY === 'scroll' || overflow === 'auto' || overflow === 'scroll') {" +
+                "        if (target.scrollTop > 0) {" +
+                "          atTop = false;" +
+                "          break;" +
                 "        }" +
-                "        target = target.parentElement;" +
                 "      }" +
+                "      target = target.parentElement;" +
                 "    }" +
+                "    " +
+                "    // Ako su unutrašnji kontejneri na vrhu, proveravamo i glavni dokument" +
+                "    if (atTop) {" +
+                "      let pageScroll = window.pageYOffset || document.documentElement.scrollTop;" +
+                "      atTop = (pageScroll <= 0);" +
+                "    }" +
+                "    " +
                 "    if (window.PullRefreshBridge) {" +
                 "      window.PullRefreshBridge.updateScrollState(atTop);" +
                 "    }" +
-                "  }" +
-                "  " +
-                "  window.addEventListener('scroll', checkTop, { passive: true });" +
-                "  window.addEventListener('touchstart', checkTop, { passive: true });" +
+                "  }, { passive: true });" +
                 "})();";
 
         webView.evaluateJavascript(script, null);
     }
 
-    /**
-     * Unutrašnja Custom klasa koja rešava problem sa kratkim pokretima i pragom povlačenja
-     */
     public static class CustomSwipeRefreshLayout extends SwipeRefreshLayout {
         private float startY = 0f;
         private boolean isDraggingToRefresh = false;
@@ -123,12 +127,10 @@ public class PullRefresh {
                 case MotionEvent.ACTION_MOVE:
                     float diffY = ev.getY() - startY;
                     
-                    // USLOV: Mora da bude povučeno više od 120 piksela nadole, 
-                    // da budemo na vrhu stranice i da WebView ne može više nagore.
+                    // Uslov: Prst mora biti na vrhu elementa (isAtTop), povučen više od 120px nadole
                     if (diffY > 120 && isAtTop && !canChildScrollUp()) {
                         isDraggingToRefresh = true;
                     } else if (!isDraggingToRefresh) {
-                        // Ako uslov nije zadovoljen, sprečavamo refresh da se aktivira na kratke pokrete
                         return false; 
                     }
                     break;
