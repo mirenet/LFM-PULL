@@ -58,9 +58,6 @@ public class PullRefresh {
         }
     }
 
-    /**
-     * Injektujemo JS skriptu koja proverava element TAČNO na mestu gde je prst spušten
-     */
     public void injectScrollDetector() {
         String script = "(function() {" +
                 "  if (window.pullRefreshInjected) return;" +
@@ -74,7 +71,6 @@ public class PullRefresh {
                 "    let atTop = true;" +
                 "    let target = document.elementFromPoint(touchX, touchY);" +
                 "    " +
-                "    // Proveravamo stablo od elementa na koji je prst spuštен nagore" +
                 "    while (target && target !== document.body && target !== document.documentElement) {" +
                 "      let style = window.getComputedStyle(target);" +
                 "      let overflowY = style.getPropertyValue('overflow-y');" +
@@ -89,7 +85,6 @@ public class PullRefresh {
                 "      target = target.parentElement;" +
                 "    }" +
                 "    " +
-                "    // Ako su unutrašnji kontejneri na vrhu, proveravamo i glavni dokument" +
                 "    if (atTop) {" +
                 "      let pageScroll = window.pageYOffset || document.documentElement.scrollTop;" +
                 "      atTop = (pageScroll <= 0);" +
@@ -105,8 +100,8 @@ public class PullRefresh {
     }
 
     public static class CustomSwipeRefreshLayout extends SwipeRefreshLayout {
+        private float startX = 0f;
         private float startY = 0f;
-        private boolean isDraggingToRefresh = false;
         private boolean isAtTop = true;
 
         public CustomSwipeRefreshLayout(Context context) {
@@ -121,22 +116,19 @@ public class PullRefresh {
         public boolean onInterceptTouchEvent(MotionEvent ev) {
             switch (ev.getAction()) {
                 case MotionEvent.ACTION_DOWN:
+                    startX = ev.getX();
                     startY = ev.getY();
-                    isDraggingToRefresh = false;
                     break;
+                    
                 case MotionEvent.ACTION_MOVE:
                     float diffY = ev.getY() - startY;
-                    
-                    // Uslov: Prst mora biti na vrhu elementa (isAtTop), povučen više od 120px nadole
-                    if (diffY > 120 && isAtTop && !canChildScrollUp()) {
-                        isDraggingToRefresh = true;
-                    } else if (!isDraggingToRefresh) {
+                    float diffX = Math.abs(ev.getX() - startX);
+
+                    // Ako je pokret horizontalniji ili ide nagore, ili ako nismo na vrhu, 
+                    // ili ako pomeraj nije veći od 120 piksela -> APSOLUTNO ZABRANJUJEMO REFRESH
+                    if (diffY < 120 || !isAtTop || diffX > diffY) {
                         return false; 
                     }
-                    break;
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    isDraggingToRefresh = false;
                     break;
             }
             return super.onInterceptTouchEvent(ev);
