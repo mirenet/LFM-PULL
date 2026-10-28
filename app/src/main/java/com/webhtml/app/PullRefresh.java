@@ -12,26 +12,19 @@ public class PullRefresh {
     private final Context context;
     private final WebView webView;
     private SwipeRefreshLayout swipeRefreshLayout;
-    private boolean isAtTop = true; // Keširano stanje sajt/element pozicije
 
     public PullRefresh(Context context, WebView webView) {
         this.context = context;
         this.webView = webView;
     }
 
-    /**
-     * Obavija prosleđeni WebView u SwipeRefreshLayout i postavlja JavaScript Bridge
-     */
     public SwipeRefreshLayout setup(android.view.ViewGroup.LayoutParams layoutParams) {
-        // 1. Kreiramo SwipeRefreshLayout
         swipeRefreshLayout = new SwipeRefreshLayout(context);
         
-        // Uklanjamo WebView iz njegovog trenutnog roditelja ako postoji
         if (webView.getParent() != null) {
             ((android.view.ViewGroup) webView.getParent()).removeView(webView);
         }
 
-        // 2. Ubacujemo WebView unutar SwipeRefreshLayout-a
         swipeRefreshLayout.addView(webView, new SwipeRefreshLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -41,16 +34,17 @@ public class PullRefresh {
             swipeRefreshLayout.setLayoutParams(layoutParams);
         }
 
-        // 3. Registrujemo JavaScript Bridge za praćenje pozicije skrola
+        // Isključujemo ga po default-u; JavaScript će ga paliti samo kada prepozna pravi gest
+        swipeRefreshLayout.setEnabled(false);
+
         webView.addJavascriptInterface(this, "PullRefreshBridge");
 
-        // 4. Konfigurišemo akciju kada korisnik pusti pull-to-refresh
         swipeRefreshLayout.setOnRefreshListener(() -> {
             webView.reload();
-            // Osvežavanje traje kratko, pa gasimo indikator posle 1.5 sekunde ako se stranica ranije ne učita
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 if (swipeRefreshLayout != null) {
                     swipeRefreshLayout.setRefreshing(false);
+                    swipeRefreshLayout.setEnabled(false);
                 }
             }, 1500);
         });
@@ -58,58 +52,76 @@ public class PullRefresh {
         return swipeRefreshLayout;
     }
 
-    /**
-     * Metoda koju JavaScript zove u hodu kada se menja pozicija skrola
-     */
     @JavascriptInterface
-    public void updateScrollState(boolean atTop) {
-        this.isAtTop = atTop;
-        
-        // Sinhronizujemo sa UI nitom da omogućimo/onemogućimo refresh kontejner
+    public void setRefreshEnabled(boolean enabled) {
         new Handler(Looper.getMainLooper()).post(() -> {
-            if (swipeRefreshLayout != null) {
-                swipeRefreshLayout.setEnabled(atTop);
+            if (swipeRefreshLayout != null && !swipeRefreshLayout.isRefreshing()) {
+                swipeRefreshLayout.setEnabled(enabled);
             }
         });
     }
 
     /**
-     * Injektujemo JS skriptu koja proverava da li je stranica ili unutrašnji element na vrhu
+     * Injektujemo naprednu JS skriptu koja meri dužinu i nameru pokreta prsta,
+     * sprečavajući da se krug pojavi na kratke pokrete i običan skrol.
      */
     public void injectScrollDetector() {
         String script = "(function() {" +
                 "  if (window.pullRefreshInjected) return;" +
                 "  window.pullRefreshInjected = true;" +
                 "  " +
-                "  window.addEventListener('scroll', function() {" +
+                "  let startY = 0;" +
+                "  let startX = 0;" +
+                "  let isAtTop = false;" +
+                "  " +
+                "  window.addEventListener('touchstart', function(e) {" +
+                "    if (e.touches.length !== 1) return;" +
+                "    startY = e.touches[0].clientY;" +
+                "    startX = e.touches[0].clientX;" +
+                "    " +
+                "    // Proveravamo da li je stranica ili element na vrhu" +
                 "    let scrollTop = window.pageYOffset || document.documentElement.scrollTop;" +
-                "    let atTop = (scrollTop <= 0);" +
+                "    isAtTop = (scrollTop <= 0);" +
+                "    " +
+                "    if (isAtTop) {" +
+                "      let target = e.target;" +
+                "      while (target && target !== document.body) {" +
+                "        let style = window.getComputedStyle(target);" +
+                "        let overflowY = style.getPropertyValue('overflow-y');" +
+                "        if ((overflowY === 'auto' || overflowY === 'scroll') && target.scrollHeight > target.clientHeight) {" +
+                "          if (target.scrollTop > 0) {" +
+                "            isAtTop = false;" +
+                "            break;" +
+                "          }" +
+                "        }" +
+                "        target = target.parentElement;" +
+                "      }" +
+                "    }" +
+                "    " +
+                "    // Inicijalno gasimo refresh dok ne vidimo nameru" +
                 "    if (window.PullRefreshBridge) {" +
-                "      window.PullRefreshBridge.updateScrollState(atTop);" +
+                "      window.PullRefreshBridge.setRefreshEnabled(false);" +
                 "    }" +
                 "  }, { passive: true });" +
                 "  " +
-                "  // Dodatna provera na dodir (za slučajeve sa unutrašnjim skrolom)" +
-                "  window.addEventListener('touchstart', function(e) {" +
-                "    let target = e.target;" +
-                "    let atTop = true;" +
-                "    while (target && target !== document.body) {" +
-                "      let style = window.getComputedStyle(target);" +
-                "      let overflowY = style.getPropertyValue('overflow-y');" +
-                "      if ((overflowY === 'auto' || overflowY === 'scroll') && target.scrollHeight > target.clientHeight) {" +
-                "        if (target.scrollTop > 0) {" +
-                "          atTop = false;" +
-                "          break;" +
-                "        }" +
+                "  window.addEventListener('touchmove', function(e) {" +
+                "    if (!isAtTop || e.touches.length !== 1) return;" +
+                "    let currentY = e.touches[0].clientY;" +
+                "    let diffY = currentY - startY;" +
+                "    " +
+                "    // USLOV: Korisnik mora da povuče nadole za više od 120 piksela sa zadržavanjem" +
+                "    // čime se eliminišu kratki pokreti i običan skrol." +
+                "    if (diffY > 120) {" +
+                "      if (window.PullRefreshBridge) {" +
+                "        window.PullRefreshBridge.setRefreshEnabled(true);" +
                 "      }" +
-                "      target = target.parentElement;" +
                 "    }" +
-                "    if (atTop) {" +
-                "      let pageTop = (window.pageYOffset || document.documentElement.scrollTop) <= 0;" +
-                "      atTop = pageTop;" +
-                "    }" +
+                "  }, { passive: true });" +
+                "  " +
+                "  window.addEventListener('touchend', function(e) {" +
+                "    isAtTop = false;" +
                 "    if (window.PullRefreshBridge) {" +
-                "      window.PullRefreshBridge.updateScrollState(atTop);" +
+                "      window.PullRefreshBridge.setRefreshEnabled(false);" +
                 "    }" +
                 "  }, { passive: true });" +
                 "})();";
