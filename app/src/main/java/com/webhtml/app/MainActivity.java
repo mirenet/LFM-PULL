@@ -271,13 +271,6 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                
-                // Injektujemo skriptu za praćenje pozicije ako je pullRefresh omogućen
-                // if (pullRefresh) {
-                    // PullRefresh pullHelper = new PullRefresh(MainActivity.this, view);
-                    // pullHelper.injectScrollDetector();
-                //}
-
                 if (url != null && url.startsWith("file://")) {
                     view.evaluateJavascript("window.webhtml = true;", null);
                 }
